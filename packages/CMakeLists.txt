@@ -63,6 +63,7 @@ list(APPEND ep
     spirv-cross
     glslang
     vulkan-header
+    glslang-static
     vulkan
     shaderc
     libepoxy
@@ -83,6 +84,7 @@ list(APPEND ep
     libuv
     libsodium
     megasdk
+    vs-placebo
 )
 foreach(package IN LISTS ep)
     if(NOT ${SINGLE_SOURCE_LOCATION} STREQUAL "")

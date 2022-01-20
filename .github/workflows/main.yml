@@ -1,44 +1,17 @@
-name: mpv
 defaults:
   run:
     shell: bash
 
 on:
   workflow_dispatch:
-    inputs:
-      command:
-        description: 'Run custom command before building'
-        required: false
-        type: string
-      b_32bit:
-        description: 'Build 32-bit'
-        required: false
-        default: true
-        type: boolean
-      b_64bit:
-        description: 'Build 64-bit'
-        required: false
-        default: true
-        type: boolean
-      sourceforge:
-        description: 'Upload to Sourceforge'
-        required: false
-        default: true
-        type: boolean
-      github_release:
-        description: 'Upload to Github release'
-        required: false
-        default: true
-        type: boolean
+
+name: vs-placebo build
 
 jobs:
-  build_mpv:
-    name: Building mpv
+  build_vs_placebo:
+    name: Building vs-placebo
     runs-on: ubuntu-latest
     env:
-      BUILD_32BIT: ${{ github.event.inputs.b_32bit }}
-      BUILD_64BIT: ${{ github.event.inputs.b_64bit }}
-      GH_TOKEN: ${{ secrets.GIT_TOKEN }}
       CURL_RETRIES: "--connect-timeout 60 --retry 999 --retry-delay 5 --retry-all-errors"
     container:
       image: docker://archlinux:base-devel
@@ -60,119 +33,72 @@ jobs:
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global --add safe.directory $PWD
 
-      - uses: actions/checkout@v3.0.1
+      - uses: actions/checkout@v3
         with:
-          ref: master
+          ref: vs-placebo-winbuild
 
       - name: Cache
-        uses: actions/cache@v3.0.2
+        uses: actions/cache@v3
         id: cache
         with:
           path: |
             src_packages
-            build32
             build64
-          key: ${{ runner.os }}-build-mycache-${{ secrets.CACHE_VERSION }}-${{ env.short_date }}-${{ env.random_hash }}
-          restore-keys: |
-            ${{ runner.os }}-build-mycache-${{ secrets.CACHE_VERSION }}-${{ env.short_date }}-${{ env.random_hash }}
-            ${{ runner.os }}-build-mycache-${{ secrets.CACHE_VERSION }}-${{ env.short_date }}
-            ${{ runner.os }}-build-mycache-${{ secrets.CACHE_VERSION }}
+          key: ${{ runner.os }}-build-mycache-${{ secrets.CACHE_VERSION }}-vsplacebo
 
-      - name: Running custom command
-        if: ${{ github.event.inputs.command != '' }}
-        continue-on-error: true
-        run: ${{ github.event.inputs.command }}
+      - name: Cache info
+        run: |
+          echo "Cache hit: ${{ steps.cache.outputs.cache-hit }}"
 
       - name: Downloading source
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         run: |
-          cmake -DTARGET_ARCH=i686-w64-mingw32   -DALWAYS_REMOVE_BUILDFILES=ON -DSINGLE_SOURCE_LOCATION=$PWD/src_packages -G Ninja -Bbuild32 -H.
           cmake -DTARGET_ARCH=x86_64-w64-mingw32 -DALWAYS_REMOVE_BUILDFILES=ON -DSINGLE_SOURCE_LOCATION=$PWD/src_packages -G Ninja -Bbuild64 -H.
-          ninja -C build32 download || true
           ninja -C build64 download || true
 
       - name: Building toolchain
+        if: ${{ steps.cache.outputs.cache-hit != 'true' }}
         id: build_toolchain
         continue-on-error: true
         run: |
-          if [[ ! "$(ls -A build32/install/bin)" ]]; then ninja -C build32 gcc; fi
           if [[ ! "$(ls -A build64/install/bin)" ]]; then ninja -C build64 gcc; fi
 
-      - name: Building mpv
-        id: build_mpv
-        if: ${{ steps.build_toolchain.outcome == 'success' }}
+      - name: Building vs-placebo
+        id: build_vs_placebo
+        if: ${{ steps.cache.outputs.cache-hit == 'true' || steps.build_toolchain.outcome == 'success' }}
         continue-on-error: true
         run: |
-          if $BUILD_32BIT; then ninja -C build32 update; ninja -C build32 mpv; fi
-          if $BUILD_64BIT; then ninja -C build64 update; ninja -C build64 mpv; fi
+          ninja -C build64 vs-placebo
 
-      - name: Packaging mpv
-        id: packaging_mpv
-        if: ${{ steps.build_toolchain.outcome == 'success' && steps.build_mpv.outcome == 'success' }}
+      - name: Packaging vs-placebo
+        id: packaging_vs_placebo
+        if: ${{ steps.build_vs_placebo.outcome == 'success' }}
         continue-on-error: true
         run: |
           mkdir -p release
-          if $BUILD_32BIT; then rm -rf build32/mpv-debug*; ninja -C build32 mpv-packaging; mv build32/mpv*.7z release; fi
-          if $BUILD_64BIT; then rm -rf build64/mpv-debug*; ninja -C build64 mpv-packaging; mv build64/mpv*.7z release; fi
+          mv build64/install/x86_64-w64-mingw32/lib64/vapoursynth/libvs_placebo.dll .
+          7z a ./release/libvs_placebo.zip libvs_placebo.dll
+          rm -f ./libvs_placebo.dll
 
-      - name: Copying ffmpeg
-        id: copying_ffmpeg
-        if: ${{ steps.build_toolchain.outcome == 'success' && steps.packaging_mpv.outcome == 'success' }}
-        continue-on-error: true
-        run: |
-          hash=$(git -C src_packages/ffmpeg rev-parse --short HEAD)
-          if $BUILD_32BIT; then 7z a -m0=lzma2 -mx=9 -ms=on release/ffmpeg-i686-git-$hash.7z ./build32/install/mingw/bin/ffmpeg.exe; fi
-          if $BUILD_64BIT; then 7z a -m0=lzma2 -mx=9 -ms=on release/ffmpeg-x86_64-git-$hash.7z ./build64/install/mingw/bin/ffmpeg.exe; fi
-
-      - name: Uploading packages to Sourceforge
-        id: upload_packages_sf
-        if: ${{ steps.packaging_mpv.outcome == 'success' && github.event.inputs.sourceforge == 'true' }}
-        continue-on-error: true
-        run: |
-          mkdir -p /root/.ssh/
-          echo "${{ secrets.SF_PRIVATE_KEY }}" > sf_key
-          ssh-keyscan frs.sourceforge.net > /root/.ssh/known_hosts
-          chmod 400 sf_key
-          chmod -R 700 /root
-          sftp -i sf_key shinchiro@frs.sourceforge.net:/home/frs/project/mpv-player-windows <<END
-          put release/mpv-dev* libmpv
-          put release/mpv-i* 32bit
-          put release/mpv-x* 64bit
-          END
-
-      - name: Uploading packages to Github release
-        id: upload_packages_gh
-        if: ${{ steps.packaging_mpv.outcome == 'success' && github.event.inputs.github_release == 'true' }}
-        continue-on-error: true
-        env:
-          SHORT_DATE: ${{ env.short_date }}
-        run: |
-          body=$(cat <<END
-          ![GitHub release (by tag)](https://img.shields.io/github/downloads/shinchiro/mpv-winbuild-cmake/$SHORT_DATE/total?label=Downloads)
-          END
-          )
-          id=$(curl -u shinchiro:$GH_TOKEN $CURL_RETRIES -s -X POST -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases -d @- <<END | jq -r '.id'
-          {
-            "tag_name": "$SHORT_DATE",
-            "name": "$SHORT_DATE",
-            "body": "$(echo ${body//$'\n'/'\n'})"
-          }
-          END
-          )
-          for file in release/*.7z; do curl -u shinchiro:$GH_TOKEN $CURL_RETRIES -X POST -H "Accept: application/vnd.github.v3+json" -H "Content-Type: $(file -b --mime-type $file)" https://uploads.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/$id/assets?name=$(basename $file) --data-binary @$file; done
+      - name: Uploading release
+        id: uploading_release
+        if: ${{ steps.packaging_vs_placebo.outcome == 'success' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: vs-placebo
+          path: release
 
       - name: Collecting logs
         id: collect_logs
         run: |
-          mkdir -p build32_logs
           mkdir -p build64_logs
-          cp -fr $(find build32 -type f -iname "*-*.log") build32_logs || true
           cp -fr $(find build64 -type f -iname "*-*.log") build64_logs || true
           7z a -m0=lzma2 -mx=9 -ms=on logs.7z build*logs
 
       - name: Uploading logs
         id: upload_logs
         continue-on-error: true
-        uses: actions/upload-artifact@master
+        uses: actions/upload-artifact@v3
         with:
           name: logs
           path: logs.7z
@@ -181,21 +107,6 @@ jobs:
       - name: Cleaning build directory
         id: delete_build_dir
         run: |
-          rm -rf build32/mpv*
-          rm -rf build64/mpv*
-          du -sh build32 build64 src_packages /var/cache/pacman/pkg || true
-
-      - name: Pruning tags
-        id: prune_tags
-        continue-on-error: true
-        run: |
-          # Keep latest 30 tags/releases
-          git fetch --tags
-          tag_list=($(git tag | sort -r))
-          old=${tag_list[@]:30}
-          for tag in ${old[@]}; do
-            id=$(curl -u shinchiro:$GH_TOKEN $CURL_RETRIES -s -X GET -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/tags/$tag | jq -r '.id')
-            curl -u shinchiro:$GH_TOKEN $CURL_RETRIES -s -X DELETE -H "Accept: application/vnd.github.v3+json" https://api.github.com/repos/shinchiro/mpv-winbuild-cmake/releases/$id
-            git tag -d $tag
-          done
-          git push --tags --prune https://shinchiro:$GH_TOKEN@github.com/shinchiro/mpv-winbuild-cmake
+          ninja -C build64 libplacebo-fullclean
+          ninja -C build64 vs-placebo-fullclean
+          du -sh build64 src_packages /var/cache/pacman/pkg || true
