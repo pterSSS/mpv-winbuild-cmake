@@ -9,6 +9,7 @@ ExternalProject_Add(libarchive
     GIT_REPOSITORY https://github.com/libarchive/libarchive.git
     SOURCE_DIR ${SOURCE_LOCATION}
     GIT_SHALLOW 1
+    PATCH_COMMAND ${EXEC} curl -s https://patch-diff.githubusercontent.com/raw/libarchive/libarchive/pull/1660.patch | patch -p1
     UPDATE_COMMAND ""
     CONFIGURE_COMMAND ${EXEC} <SOURCE_DIR>/configure
         --host=${TARGET_ARCH}
