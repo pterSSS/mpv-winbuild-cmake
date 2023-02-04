@@ -7,12 +7,11 @@ endif()
 ExternalProject_Add(gcc
     DEPENDS
         mingw-w64-headers
-    URL https://mirrorservice.org/sites/sourceware.org/pub/gcc/snapshots/12-20230401/gcc-12-20230401.tar.xz
-    # https://mirrorservice.org/sites/sourceware.org/pub/gcc/snapshots/12-20221217/sha512.sum
-    URL_HASH SHA512=b0757f56cd778ca537090c79d1ca606e28d258473a9add59df9be39dcfe3047cbe324e81a389f101d8ded31419b0e535410997593bd99a6fa22730288362de4e
+    URL https://mirrorservice.org/sites/sourceware.org/pub/gcc/releases/gcc-13.1.0/gcc-13.1.0.tar.xz
+    URL_HASH SHA512=6cf06dfc48f57f5e67f7efe3248019329a14d690c728d9f2f7ef5fa0d58f1816f309586ba7ea2eac20d0b60a2d1b701f68392e9067dd46f827ba0efd7192db33
     DOWNLOAD_DIR ${SOURCE_LOCATION}
     # https://gcc.gnu.org/bugzilla/show_bug.cgi?id=54412
-    PATCH_COMMAND ${EXEC} curl -sL https://salsa.debian.org/mingw-w64-team/gcc-mingw-w64/-/raw/5e7d749d80e47d08e34a17971479d06cd423611e/debian/patches/vmov-alignment.patch | patch -p2
+    PATCH_COMMAND ${EXEC} curl -sL https://gist.githubusercontent.com/quietvoid/1e540f92a6b9d107b03af90b07cf06a2/raw/6dbb64f1810e3ef339e85be12add988c9410085b/vmov-alignment.patch | patch -p2
     CONFIGURE_COMMAND <SOURCE_DIR>/configure
         --target=${TARGET_ARCH}
         --prefix=${CMAKE_INSTALL_PREFIX}
@@ -48,4 +47,11 @@ ExternalProject_Add_Step(gcc final
     LOG 1
 )
 
-cleanup(gcc final)
+ExternalProject_Add_Step(gcc symlink-eh
+    DEPENDEES final
+
+    COMMAND ${EXEC} ln -vs ${CMAKE_INSTALL_PREFIX}/lib/gcc/${TARGET_ARCH}/13.1.0/libgcc.a ${CMAKE_INSTALL_PREFIX}/lib/gcc/${TARGET_ARCH}/13.1.0/libgcc_eh.a
+    LOG 1
+)
+
+cleanup(gcc symlink-eh)

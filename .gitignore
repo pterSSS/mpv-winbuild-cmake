@@ -5,3 +5,5 @@
 /64*
 /i686*
 /x86_64*
+/src_packages
+/install_rustup
